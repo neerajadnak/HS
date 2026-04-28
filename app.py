@@ -7,83 +7,81 @@ from streamlit_webrtc import webrtc_streamer, VideoTransformerBase, RTCConfigura
 st.set_page_config(page_title="Video Recorder", layout="centered")
 
 st.title("🎥 Streamlit Video Recorder")
-st.write("Click **Start** to begin recording and **Stop** to save and view result.")
+st.write("1️⃣ Click START below to enable camera\n2️⃣ Then click Record")
 
-# Initialize session state
+# Session state
 if "frames" not in st.session_state:
     st.session_state.frames = []
 if "recording" not in st.session_state:
     st.session_state.recording = False
 
-# WebRTC configuration (IMPORTANT for cloud)
+# WebRTC config (IMPORTANT)
 RTC_CONFIGURATION = RTCConfiguration(
     {"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]}
 )
 
-# Video processor class
+# Video processor
 class VideoRecorder(VideoTransformerBase):
     def transform(self, frame):
         img = frame.to_ndarray(format="bgr24")
 
-        # Save frames only when recording is ON
+        # Only record if BOTH conditions true
         if st.session_state.recording:
             st.session_state.frames.append(img)
 
         return img
 
-# Start button
-if st.button("▶️ Start Recording"):
-    st.session_state.recording = True
-    st.session_state.frames = []
-    st.success("Recording started...")
-
-# Webcam stream
+# WebRTC streamer (camera)
 webrtc_ctx = webrtc_streamer(
-    key="video-recorder",
+    key="video",
     video_transformer_factory=VideoRecorder,
     rtc_configuration=RTC_CONFIGURATION,
     media_stream_constraints={"video": True, "audio": False},
 )
 
-# Stop button
-if st.button("⏹ Stop Recording"):
-    st.session_state.recording = False
-    st.success("Recording stopped!")
+# RECORD button (only works if camera running)
+if webrtc_ctx.state.playing:
+    if st.button("🔴 Start Recording"):
+        st.session_state.recording = True
+        st.session_state.frames = []
+        st.success("Recording started...")
 
-    if len(st.session_state.frames) > 0:
-        # Create temp file
-        temp_video = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
+    if st.button("⏹ Stop Recording"):
+        st.session_state.recording = False
+        st.success("Recording stopped!")
 
-        height, width, _ = st.session_state.frames[0].shape
+        if len(st.session_state.frames) > 0:
+            temp_video = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
 
-        # Video writer
-        out = cv2.VideoWriter(
-            temp_video.name,
-            cv2.VideoWriter_fourcc(*"mp4v"),
-            20,
-            (width, height),
-        )
+            height, width, _ = st.session_state.frames[0].shape
 
-        # Write frames
-        for frame in st.session_state.frames:
-            out.write(frame)
-
-        out.release()
-
-        st.subheader("🎬 Recorded Video")
-        st.video(temp_video.name)
-
-        # Download button
-        with open(temp_video.name, "rb") as f:
-            st.download_button(
-                label="⬇️ Download Video",
-                data=f,
-                file_name="recorded_video.mp4",
-                mime="video/mp4",
+            out = cv2.VideoWriter(
+                temp_video.name,
+                cv2.VideoWriter_fourcc(*"mp4v"),
+                20,
+                (width, height),
             )
 
-        # Clear frames after saving
-        st.session_state.frames = []
+            for frame in st.session_state.frames:
+                out.write(frame)
 
-    else:
-        st.warning("No video recorded. Please click Start first.")
+            out.release()
+
+            st.subheader("🎬 Recorded Video")
+            st.video(temp_video.name)
+
+            with open(temp_video.name, "rb") as f:
+                st.download_button(
+                    "⬇️ Download Video",
+                    f,
+                    "recorded_video.mp4",
+                    "video/mp4",
+                )
+
+            st.session_state.frames = []
+
+        else:
+            st.warning("No frames captured. Try recording again.")
+
+else:
+    st.warning("⚠️ Please click START on the camera first")
