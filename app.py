@@ -1,21 +1,21 @@
 import streamlit as st
-import cv2
 import numpy as np
+from PIL import Image, ImageDraw
 from ultralytics import YOLO
 
 # -----------------------------
-# Load YOLO Model (cached)
+# Load YOLO Model
 # -----------------------------
 @st.cache_resource
 def load_model():
-    return YOLO("yolo11n.pt")
+    return YOLO("yolov8n.pt")  # auto-downloads
 
 model = load_model()
 
-st.title("🚀 Object Detection App (YOLO)")
+st.title("🚀 Object Detection (No OpenCV)")
 
 # -----------------------------
-# Session State for objects
+# Session state
 # -----------------------------
 if "detected_objects" not in st.session_state:
     st.session_state.detected_objects = set()
@@ -23,7 +23,7 @@ if "detected_objects" not in st.session_state:
 # -----------------------------
 # Mode Selection
 # -----------------------------
-mode = st.radio("Choose Input Type", ["📸 Camera", "🎥 Video Upload"])
+mode = st.radio("Choose Input Type", ["📸 Camera", "🎥 Upload Image"])
 
 # =============================
 # 📸 CAMERA INPUT
@@ -31,79 +31,44 @@ mode = st.radio("Choose Input Type", ["📸 Camera", "🎥 Video Upload"])
 if mode == "📸 Camera":
     image_file = st.camera_input("Take a picture")
 
-    if image_file is not None:
-        file_bytes = np.asarray(bytearray(image_file.read()), dtype=np.uint8)
-        frame = cv2.imdecode(file_bytes, 1)
-
-        results = model(frame)
-
-        annotated = frame.copy()
-
-        for r in results:
-            for box in r.boxes:
-                cls_id = int(box.cls[0])
-                label = model.names[cls_id]
-
-                # Skip person
-                if label == "person":
-                    continue
-
-                st.session_state.detected_objects.add(label)
-
-                x1, y1, x2, y2 = map(int, box.xyxy[0])
-
-                cv2.rectangle(annotated, (x1, y1), (x2, y2), (0,255,0), 2)
-                cv2.putText(annotated, label, (x1, y1-5),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,255,0), 2)
-
-        annotated = cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB)
-        st.image(annotated, caption="Detected Image")
+# =============================
+# 🎥 IMAGE UPLOAD
+# =============================
+else:
+    image_file = st.file_uploader("Upload an image", type=["jpg", "jpeg", "png"])
 
 # =============================
-# 🎥 VIDEO UPLOAD
+# PROCESS IMAGE
 # =============================
-elif mode == "🎥 Video Upload":
-    video_file = st.file_uploader("Upload a video", type=["mp4", "mov", "avi"])
+if image_file is not None:
+    image = Image.open(image_file).convert("RGB")
+    img_array = np.array(image)
 
-    if video_file is not None:
-        tfile = open("temp.mp4", "wb")
-        tfile.write(video_file.read())
+    results = model(img_array)
 
-        cap = cv2.VideoCapture("temp.mp4")
+    # Draw using PIL
+    draw = ImageDraw.Draw(image)
 
-        stframe = st.empty()
+    for r in results:
+        for box in r.boxes:
+            cls_id = int(box.cls[0])
+            label = model.names[cls_id]
 
-        while cap.isOpened():
-            ret, frame = cap.read()
-            if not ret:
-                break
+            # Skip person
+            if label == "person":
+                continue
 
-            results = model(frame)
-            annotated = frame.copy()
+            st.session_state.detected_objects.add(label)
 
-            for r in results:
-                for box in r.boxes:
-                    cls_id = int(box.cls[0])
-                    label = model.names[cls_id]
+            x1, y1, x2, y2 = box.xyxy[0].tolist()
 
-                    if label == "person":
-                        continue
+            draw.rectangle([x1, y1, x2, y2], outline="green", width=3)
+            draw.text((x1, y1 - 10), label, fill="green")
 
-                    st.session_state.detected_objects.add(label)
-
-                    x1, y1, x2, y2 = map(int, box.xyxy[0])
-
-                    cv2.rectangle(annotated, (x1, y1), (x2, y2), (0,255,0), 2)
-                    cv2.putText(annotated, label, (x1, y1-5),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,255,0), 2)
-
-            annotated = cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB)
-            stframe.image(annotated)
-
-        cap.release()
+    st.image(image, caption="Detected Image")
 
 # -----------------------------
-# Output Detected Objects
+# OUTPUT
 # -----------------------------
 st.subheader("📋 Detected Objects (Summary)")
 st.write(list(st.session_state.detected_objects))
