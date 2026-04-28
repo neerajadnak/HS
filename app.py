@@ -1,74 +1,44 @@
 import streamlit as st
-import numpy as np
-from PIL import Image, ImageDraw
+import cv2
 from ultralytics import YOLO
+import numpy as np
 
-# -----------------------------
-# Load YOLO Model
-# -----------------------------
+st.title("Object Detection (No Person)")
+
 @st.cache_resource
 def load_model():
-    return YOLO("yolov8n.pt")  # auto-downloads
+    return YOLO("yolo11n.pt")
 
 model = load_model()
 
-st.title("🚀 Object Detection (No OpenCV)")
+uploaded_file = st.file_uploader("Upload an image", type=["jpg", "png", "jpeg"])
 
-# -----------------------------
-# Session state
-# -----------------------------
-if "detected_objects" not in st.session_state:
-    st.session_state.detected_objects = set()
+if uploaded_file:
+    file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
+    frame = cv2.imdecode(file_bytes, 1)
 
-# -----------------------------
-# Mode Selection
-# -----------------------------
-mode = st.radio("Choose Input Type", ["📸 Camera", "🎥 Upload Image"])
+    results = model(frame)
 
-# =============================
-# 📸 CAMERA INPUT
-# =============================
-if mode == "📸 Camera":
-    image_file = st.camera_input("Take a picture")
-
-# =============================
-# 🎥 IMAGE UPLOAD
-# =============================
-else:
-    image_file = st.file_uploader("Upload an image", type=["jpg", "jpeg", "png"])
-
-# =============================
-# PROCESS IMAGE
-# =============================
-if image_file is not None:
-    image = Image.open(image_file).convert("RGB")
-    img_array = np.array(image)
-
-    results = model(img_array)
-
-    # Draw using PIL
-    draw = ImageDraw.Draw(image)
+    detected_objects = set()
 
     for r in results:
         for box in r.boxes:
             cls_id = int(box.cls[0])
             label = model.names[cls_id]
 
-            # Skip person
             if label == "person":
                 continue
 
-            st.session_state.detected_objects.add(label)
+            detected_objects.add(label)
 
-            x1, y1, x2, y2 = box.xyxy[0].tolist()
+            x1, y1, x2, y2 = map(int, box.xyxy[0])
+            cv2.rectangle(frame, (x1, y1), (x2, y2), (0,255,0), 2)
+            cv2.putText(frame, label, (x1, y1-5),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,255,0), 2)
 
-            draw.rectangle([x1, y1, x2, y2], outline="green", width=3)
-            draw.text((x1, y1 - 10), label, fill="green")
+    frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
-    st.image(image, caption="Detected Image")
+    st.image(frame, caption="Processed Image")
 
-# -----------------------------
-# OUTPUT
-# -----------------------------
-st.subheader("📋 Detected Objects (Summary)")
-st.write(list(st.session_state.detected_objects))
+    st.write("### Detected Objects:")
+    st.write(list(detected_objects))
