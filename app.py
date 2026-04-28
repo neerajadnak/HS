@@ -1,44 +1,89 @@
 import streamlit as st
 import cv2
-from ultralytics import YOLO
-import numpy as np
+import tempfile
+import av
+from streamlit_webrtc import webrtc_streamer, VideoTransformerBase, RTCConfiguration
 
-st.title("Object Detection (No Person)")
+st.set_page_config(page_title="Video Recorder", layout="centered")
 
-@st.cache_resource
-def load_model():
-    return YOLO("yolo11n.pt")
+st.title("🎥 Streamlit Video Recorder")
+st.write("Click **Start** to begin recording and **Stop** to save and view result.")
 
-model = load_model()
+# Initialize session state
+if "frames" not in st.session_state:
+    st.session_state.frames = []
+if "recording" not in st.session_state:
+    st.session_state.recording = False
 
-uploaded_file = st.file_uploader("Upload an image", type=["jpg", "png", "jpeg"])
+# WebRTC configuration (IMPORTANT for cloud)
+RTC_CONFIGURATION = RTCConfiguration(
+    {"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]}
+)
 
-if uploaded_file:
-    file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
-    frame = cv2.imdecode(file_bytes, 1)
+# Video processor class
+class VideoRecorder(VideoTransformerBase):
+    def transform(self, frame):
+        img = frame.to_ndarray(format="bgr24")
 
-    results = model(frame)
+        # Save frames only when recording is ON
+        if st.session_state.recording:
+            st.session_state.frames.append(img)
 
-    detected_objects = set()
+        return img
 
-    for r in results:
-        for box in r.boxes:
-            cls_id = int(box.cls[0])
-            label = model.names[cls_id]
+# Start button
+if st.button("▶️ Start Recording"):
+    st.session_state.recording = True
+    st.session_state.frames = []
+    st.success("Recording started...")
 
-            if label == "person":
-                continue
+# Webcam stream
+webrtc_ctx = webrtc_streamer(
+    key="video-recorder",
+    video_transformer_factory=VideoRecorder,
+    rtc_configuration=RTC_CONFIGURATION,
+    media_stream_constraints={"video": True, "audio": False},
+)
 
-            detected_objects.add(label)
+# Stop button
+if st.button("⏹ Stop Recording"):
+    st.session_state.recording = False
+    st.success("Recording stopped!")
 
-            x1, y1, x2, y2 = map(int, box.xyxy[0])
-            cv2.rectangle(frame, (x1, y1), (x2, y2), (0,255,0), 2)
-            cv2.putText(frame, label, (x1, y1-5),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,255,0), 2)
+    if len(st.session_state.frames) > 0:
+        # Create temp file
+        temp_video = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
 
-    frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        height, width, _ = st.session_state.frames[0].shape
 
-    st.image(frame, caption="Processed Image")
+        # Video writer
+        out = cv2.VideoWriter(
+            temp_video.name,
+            cv2.VideoWriter_fourcc(*"mp4v"),
+            20,
+            (width, height),
+        )
 
-    st.write("### Detected Objects:")
-    st.write(list(detected_objects))
+        # Write frames
+        for frame in st.session_state.frames:
+            out.write(frame)
+
+        out.release()
+
+        st.subheader("🎬 Recorded Video")
+        st.video(temp_video.name)
+
+        # Download button
+        with open(temp_video.name, "rb") as f:
+            st.download_button(
+                label="⬇️ Download Video",
+                data=f,
+                file_name="recorded_video.mp4",
+                mime="video/mp4",
+            )
+
+        # Clear frames after saving
+        st.session_state.frames = []
+
+    else:
+        st.warning("No video recorded. Please click Start first.")
