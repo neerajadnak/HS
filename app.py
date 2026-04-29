@@ -1,87 +1,64 @@
 import streamlit as st
 import cv2
-import tempfile
-import av
-from streamlit_webrtc import webrtc_streamer, VideoTransformerBase, RTCConfiguration
+import numpy as np
+from ultralytics import YOLO
+from collections import Counter
 
-st.set_page_config(page_title="Video Recorder", layout="centered")
+st.title("🛋️ Room Object Detection (No Person)")
 
-st.title("🎥 Streamlit Video Recorder")
-st.write("1️⃣ Click START below to enable camera\n2️⃣ Then click Record")
+st.write("Upload a room image. The app will detect all objects except people.")
 
-# Session state
-if "frames" not in st.session_state:
-    st.session_state.frames = []
-if "recording" not in st.session_state:
-    st.session_state.recording = False
+# Load model once
+@st.cache_resource
+def load_model():
+    return YOLO("yolo11n.pt")
 
-# WebRTC config (IMPORTANT)
-RTC_CONFIGURATION = RTCConfiguration(
-    {"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]}
-)
+model = load_model()
 
-# Video processor
-class VideoRecorder(VideoTransformerBase):
-    def transform(self, frame):
-        img = frame.to_ndarray(format="bgr24")
+uploaded_file = st.file_uploader("Upload Image", type=["jpg", "jpeg", "png"])
 
-        # Only record if BOTH conditions true
-        if st.session_state.recording:
-            st.session_state.frames.append(img)
+if uploaded_file:
+    # Convert uploaded file to OpenCV image
+    file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
+    frame = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
 
-        return img
+    st.image(frame, caption="Uploaded Image", use_container_width=True)
 
-# WebRTC streamer (camera)
-webrtc_ctx = webrtc_streamer(
-    key="video",
-    video_transformer_factory=VideoRecorder,
-    rtc_configuration=RTC_CONFIGURATION,
-    media_stream_constraints={"video": True, "audio": False},
-)
+    # Run YOLO
+    results = model(frame)
 
-# RECORD button (only works if camera running)
-if webrtc_ctx.state.playing:
-    if st.button("🔴 Start Recording"):
-        st.session_state.recording = True
-        st.session_state.frames = []
-        st.success("Recording started...")
+    annotated_frame = frame.copy()
+    detected_labels = []
 
-    if st.button("⏹ Stop Recording"):
-        st.session_state.recording = False
-        st.success("Recording stopped!")
+    for r in results:
+        boxes = r.boxes
 
-        if len(st.session_state.frames) > 0:
-            temp_video = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
+        for box in boxes:
+            cls_id = int(box.cls[0])
+            label = model.names[cls_id]
 
-            height, width, _ = st.session_state.frames[0].shape
+            # ❌ SKIP PERSON
+            if label == "person":
+                continue
 
-            out = cv2.VideoWriter(
-                temp_video.name,
-                cv2.VideoWriter_fourcc(*"mp4v"),
-                20,
-                (width, height),
-            )
+            detected_labels.append(label)
 
-            for frame in st.session_state.frames:
-                out.write(frame)
+            # Get box coords
+            x1, y1, x2, y2 = map(int, box.xyxy[0])
 
-            out.release()
+            # Draw box
+            cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), (0,255,0), 2)
+            cv2.putText(annotated_frame, label, (x1, y1-5),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,255,0), 2)
 
-            st.subheader("🎬 Recorded Video")
-            st.video(temp_video.name)
+    st.image(annotated_frame, caption="Detected Objects (No Person)", use_container_width=True)
 
-            with open(temp_video.name, "rb") as f:
-                st.download_button(
-                    "⬇️ Download Video",
-                    f,
-                    "recorded_video.mp4",
-                    "video/mp4",
-                )
+    # Count objects
+    st.subheader("🧾 Detected Objects Summary")
 
-            st.session_state.frames = []
-
-        else:
-            st.warning("No frames captured. Try recording again.")
-
-else:
-    st.warning("⚠️ Please click START on the camera first")
+    if detected_labels:
+        counts = Counter(detected_labels)
+        for obj, count in counts.items():
+            st.write(f"**{obj}** : {count}")
+    else:
+        st.write("No objects detected.")
